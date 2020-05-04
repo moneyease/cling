@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"log"
 	"net"
@@ -14,48 +15,102 @@ import (
 )
 
 type Cling interface {
-	Run()
+	ListenAndServe(string) error
+	Serve() error
 }
 
 type clingImpl struct {
 	jsonMap      map[string]interface{}
 	port, prompt string
 	t            interface{}
-	fname        string
+	args         []string
+	logger       *log.Logger
+	file         *os.File
 }
 
-var reserved = map[string]bool{"arg": true, "help": true, "func": true}
+var reserved = map[string]bool{"help": true, "func": true}
 
 const (
-	DELIMITER byte = '\t'
+	DELIMITER byte = '\n'
 	QUIT_SIGN      = "quit"
 )
 
-func New(s string, port string, prompt string, t interface{}) Cling {
+func New(s string, prompt string, t interface{}) Cling {
 	var c clingImpl
 	err := json.Unmarshal([]byte(s), &c.jsonMap)
 	if err != nil {
 		panic(err)
 		return nil
 	}
-	c.port = ":" + port
-	c.prompt = "\n" + prompt + " "
+	c.prompt = prompt
 	c.t = t
-	log.Printf("%+v", c.jsonMap["show"])
+	c.file, err = os.OpenFile("text.log",
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	c.logger = log.New(c.file, "prefix", log.LstdFlags)
 	return &c
 }
 
-func (c *clingImpl) Run() {
+func (c *clingImpl) Serve() error {
+	if !terminal.IsTerminal(0) || !terminal.IsTerminal(1) {
+		return fmt.Errorf("stdin/stdout should be terminal")
+	}
+	oldState, err := terminal.MakeRaw(0)
+	if err != nil {
+		return err
+	}
+	defer terminal.Restore(0, oldState)
+	defer c.file.Close()
+	/*
+		r := bufio.NewReaderSize(os.Stdin, 1)
+		w := bufio.NewWriter(os.Stdout)
+			rw := bufio.NewReadWriter(r, w)
+			term := terminal.NewTerminal(rw, "")
+	*/
+	screen := struct {
+		io.Reader
+		io.Writer
+	}{os.Stdin, os.Stdout}
+	term := terminal.NewTerminal(screen, "")
+	term.SetPrompt(string(term.Escape.Red) + c.prompt + string(term.Escape.Reset))
+	rePrefix := string(term.Escape.Cyan) + string(term.Escape.Reset)
+	for {
+		line, err := term.ReadLine()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if line == "" {
+			continue
+		}
+		if line == QUIT_SIGN {
+			c.logger.Println("Listener: Quit!")
+			break
+		}
+		respContent := c.commander(line)
+		fmt.Fprintln(term, rePrefix, respContent)
+		//w.Flush()
+	}
+	return nil
+}
+
+func (c *clingImpl) ListenAndServe(port string) error {
+	defer c.file.Close()
+	c.port = ":" + port
 	listener, err := net.Listen("tcp", c.port)
 	if err != nil {
-		log.Printf("Listener: Listen Error: %s\n", err)
-		os.Exit(1)
+		c.logger.Printf("Listener: Listen Error: %s\n", err)
+		return fmt.Errorf("listener error")
 	}
-	log.Println("Listener: Listening...")
+	c.logger.Println("Listener: Listening...")
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("Listener: Accept Error: %s\n", err)
+			c.logger.Printf("Listener: Accept Error: %s\n", err)
 			continue
 		}
 		go func(conn net.Conn) {
@@ -63,24 +118,24 @@ func (c *clingImpl) Run() {
 			for {
 				num, err := writer(conn, c.prompt)
 				if err != nil {
-					log.Printf("Listener: Write Error: %s\n", err)
+					c.logger.Printf("Listener: Write Error: %s\n", err)
 				}
-				log.Println("Listener: Accepted a request.")
-				log.Println("Listener: Read the request content...")
-				content, err := reader(conn, DELIMITER)
+				c.logger.Println("Listener: Accepted a request.")
+				c.logger.Println("Listener: Read the request content...")
+				line, err := reader(conn, DELIMITER)
 				if err != nil {
-					log.Printf("Listener: Read error: %s", err)
+					c.logger.Printf("Listener: Read error: %s", err)
 				}
-				if content == QUIT_SIGN {
-					log.Println("Listener: Quit!")
+				if line == QUIT_SIGN {
+					c.logger.Println("Listener: Quit!")
 					break
 				}
-				respContent := c.commander(content)
+				respContent := c.commander(line)
 				num, err = writer(conn, respContent)
 				if err != nil {
-					log.Printf("Listener: Write Error: %s\n", err)
+					c.logger.Printf("Listener: Write Error: %s\n", err)
 				}
-				log.Printf("Listener: Wrote %d byte(s)\n", num)
+				c.logger.Printf("Listener: Wrote %d byte(s)\n", num)
 			}
 		}(conn)
 	}
@@ -105,9 +160,9 @@ func reader(conn net.Conn, delim byte) (string, error) {
 	return buffer.String(), nil
 }
 
-func writer(conn net.Conn, content string) (int, error) {
+func writer(conn net.Conn, line string) (int, error) {
 	writer := bufio.NewWriter(conn)
-	number, err := writer.WriteString(content)
+	number, err := writer.WriteString(line)
 	if err == nil {
 		err = writer.Flush()
 	}
@@ -121,7 +176,7 @@ func (c *clingImpl) commander(cmd string) string {
 	if k, ok := c.helper(c.jsonMap, &key); ok {
 		return k
 	}
-	log.Printf("> key '%s' %v\n", key, c.jsonMap[key])
+	c.logger.Printf("> key '%s' %v\n", key, c.jsonMap[key])
 	if k, ok := c.jsonMap[key]; ok {
 		return c.parser(in, index+1, k.(map[string]interface{}))
 	}
@@ -133,7 +188,7 @@ func (c *clingImpl) invoke(cmd string, args ...interface{}) string {
 	for i, _ := range args {
 		inputs[i] = reflect.ValueOf(args[i])
 	}
-	log.Printf("invoking : %v.%s(%s)", reflect.TypeOf(c.t).String(), cmd, args)
+	c.logger.Printf("invoking : %v.%s(%s)", reflect.TypeOf(c.t).String(), cmd, args)
 	_, ok := reflect.TypeOf(c.t).MethodByName(cmd)
 	if ok {
 		v := reflect.ValueOf(c.t).MethodByName(cmd).Call(inputs)
@@ -143,30 +198,43 @@ func (c *clingImpl) invoke(cmd string, args ...interface{}) string {
 }
 
 func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool) {
+	*key = strings.TrimSpace(*key)
 	if k, ok := m[*key]; ok {
 		if *key == "help" {
-			log.Printf("invoke %s", k.(string))
+			c.logger.Printf("invoke %s", k.(string))
 			return c.invoke(k.(string), []string{}), true
 		}
 	} else {
 		var help, help_filter string
-		var match_count int
+		var nfilter, nmatch int
 		err := ""
 		for k, _ := range m {
 			if !reserved[k] {
-				help += fmt.Sprintf("%v ", k)
-				log.Printf("k=%s, key=%s\n", k, *key)
+				c.logger.Printf("k=%s, key=%s\n", k, *key)
+				//				if strings.HasPrefix(k, "arg") {
+				if k == "arg" {
+					// possibly more kw at this level
+					c.args = append(c.args, *key)
+					//					*key = "arg"
+					*key = k
+				} else {
+					nmatch++
+					help += fmt.Sprintf("%v ", k)
+				}
 				if *key != "" && strings.HasPrefix(k, *key) {
-					help_filter += fmt.Sprintf("%v ", k)
-					match_count++
+					c.logger.Printf("2. k=%s, key=%s\n", k, *key)
+					help_filter += fmt.Sprintf("%v ", k) // strings.TrimPrefix(k, "arg"))
+					nfilter++
 				}
 			}
 		}
-		if match_count == 1 {
+		if nfilter == 0 && nmatch == 0 {
+			return "extra args", true
+		} else if nfilter == 1 {
 			*key = strings.TrimSpace(help_filter)
-			log.Printf("key changed to '%s'\n", *key)
-			return "", false
-		} else if len(help_filter) > 0 {
+			c.logger.Printf("key changed to '%s'\n", *key)
+			return *key, false
+		} else if nfilter > 0 {
 			return err + help_filter, true
 		} else {
 			return err + help, true
@@ -176,12 +244,13 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 }
 
 func (c *clingImpl) parser(in []string, index int, m map[string]interface{}) string {
+	c.logger.Printf("m is %v", m)
 	if index == len(in) {
-
 		if k, ok := m["func"]; ok {
-			c.fname = k.(string)
-			return c.invoke(c.fname, in[index-1:])
+			return c.invoke(k.(string), c.args)
+			c.args = c.args[:]
 		}
+		// sh se id 1 2
 		key := ""
 		k, _ := c.helper(m, &key)
 		return k
@@ -190,7 +259,6 @@ func (c *clingImpl) parser(in []string, index int, m map[string]interface{}) str
 	if k, ok := c.helper(m, &key); ok {
 		return k
 	}
-	log.Printf(">> key '%s' %v\n", key, m[key])
 	if k, ok := m[key]; ok {
 		return c.parser(in, index+1, k.(map[string]interface{}))
 	}
