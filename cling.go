@@ -21,10 +21,13 @@ type clingImpl struct {
 	jsonMap      map[string]interface{}
 	port, prompt string
 	t            interface{}
+	fname        string
 }
 
+var reserved = map[string]bool{"arg": true, "help": true, "func": true}
+
 const (
-	DELIMITER byte = '\n'
+	DELIMITER byte = '\t'
 	QUIT_SIGN      = "quit"
 )
 
@@ -136,7 +139,7 @@ func (c *clingImpl) invoke(cmd string, args ...interface{}) string {
 		v := reflect.ValueOf(c.t).MethodByName(cmd).Call(inputs)
 		return v[0].Interface().(string)
 	}
-	return cmd
+	return fmt.Sprintf("Missing definition ") + cmd
 }
 
 func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool) {
@@ -150,9 +153,10 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 		var match_count int
 		err := ""
 		for k, _ := range m {
-			if k != "help" {
+			if !reserved[k] {
 				help += fmt.Sprintf("%v ", k)
-				if strings.HasPrefix(k, *key) {
+				log.Printf("k=%s, key=%s\n", k, *key)
+				if *key != "" && strings.HasPrefix(k, *key) {
 					help_filter += fmt.Sprintf("%v ", k)
 					match_count++
 				}
@@ -172,14 +176,15 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 }
 
 func (c *clingImpl) parser(in []string, index int, m map[string]interface{}) string {
-	if k, ok := m["func"]; ok {
-		return c.invoke(k.(string), in[index:])
-	}
-	if index >= len(in) {
-		key := ""
-		if k, ok := c.helper(m, &key); ok {
-			return k
+	if index == len(in) {
+
+		if k, ok := m["func"]; ok {
+			c.fname = k.(string)
+			return c.invoke(c.fname, in[index-1:])
 		}
+		key := ""
+		k, _ := c.helper(m, &key)
+		return k
 	}
 	key := in[index]
 	if k, ok := c.helper(m, &key); ok {
