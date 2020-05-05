@@ -63,19 +63,12 @@ func (c *clingImpl) Serve() error {
 	}
 	defer terminal.Restore(0, oldState)
 	defer c.file.Close()
-	/*
-		r := bufio.NewReaderSize(os.Stdin, 1)
-		w := bufio.NewWriter(os.Stdout)
-			rw := bufio.NewReadWriter(r, w)
-			term := terminal.NewTerminal(rw, "")
-	*/
 	screen := struct {
 		io.Reader
 		io.Writer
 	}{os.Stdin, os.Stdout}
 	term := terminal.NewTerminal(screen, "")
 	term.SetPrompt(string(term.Escape.Red) + c.prompt + string(term.Escape.Reset))
-	rePrefix := string(term.Escape.Cyan) + string(term.Escape.Reset)
 	for {
 		line, err := term.ReadLine()
 		if err == io.EOF {
@@ -87,18 +80,17 @@ func (c *clingImpl) Serve() error {
 		if line == "" {
 			continue
 		}
-		if line == QUIT_SIGN {
+		if strings.HasPrefix(QUIT_SIGN, line) {
 			c.logger.Println("Listener: Quit!")
 			break
 		}
 		respContent := c.commander(line)
-		fmt.Fprintln(term, rePrefix, respContent)
-		//w.Flush()
+		fmt.Fprintln(term, respContent)
 	}
 	return nil
 }
 
-func (c *clingImpl) ListenAndServe(port string) error {
+func (c *clingImpl) listenAndServe(port string) error {
 	defer c.file.Close()
 	c.port = ":" + port
 	listener, err := net.Listen("tcp", c.port)
@@ -139,6 +131,52 @@ func (c *clingImpl) ListenAndServe(port string) error {
 			}
 		}(conn)
 	}
+}
+
+func (c *clingImpl) ListenAndServe(port string) error {
+	defer c.file.Close()
+	c.port = ":" + port
+	listener, err := net.Listen("tcp", c.port)
+	if err != nil {
+		c.logger.Printf("Listener: Listen Error: %s\n", err)
+		return fmt.Errorf("listener error")
+	}
+	c.logger.Println("Listener: Listening...")
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			c.logger.Printf("Listener: Accept Error: %s\n", err)
+			continue
+		}
+		go func(conn net.Conn) {
+			defer conn.Close()
+			r := bufio.NewReader(conn)
+			w := bufio.NewWriter(conn)
+			rw := bufio.NewReadWriter(r, w)
+			term := terminal.NewTerminal(rw, "")
+			term.SetPrompt(string(term.Escape.Red) + c.prompt + string(term.Escape.Reset))
+			for {
+				line, err := term.ReadLine()
+				if err == io.EOF {
+					return
+				}
+				if err != nil {
+					return
+				}
+				if line == "" {
+					continue
+				}
+				if strings.HasPrefix(QUIT_SIGN, line) {
+					c.logger.Println("Listener: Quit!")
+					break
+				}
+				respContent := c.commander(line)
+				fmt.Fprintln(term, respContent)
+				w.Flush()
+			}
+		}(conn)
+	}
+	return nil
 }
 
 func reader(conn net.Conn, delim byte) (string, error) {

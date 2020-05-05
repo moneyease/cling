@@ -93,6 +93,6 @@ func (t T) Foo(n []string) string {
 func main() {
 	fmt.Printf("Listening on 9090\n")
 	c := cling.New(jsonStr2, ">", T{})
-	//	c.ListenAndServe("9090")
-	c.Serve()
+	c.ListenAndServe("9090")
+	//c.Serve()
 }
