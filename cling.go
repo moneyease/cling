@@ -52,7 +52,34 @@ func New(s string, prompt string, t interface{}) Cling {
 	c.logger = log.New(c.file, "prefix", log.LstdFlags)
 	return &c
 }
+func newTerm(rw io.ReadWriter, prompt string) (*terminal.Terminal, error) {
+	term := terminal.NewTerminal(rw, "")
+	term.SetPrompt(string(term.Escape.Red) + prompt + string(term.Escape.Reset))
+	line, err := term.ReadPassword("Enter a password:")
+	if err == nil && line == "P@l0Alt0nw" {
+		return nil, fmt.Errorf("Wrong Password")
+	}
+	return term, nil
+}
 
+func (c *clingImpl) serve(term *terminal.Terminal) error {
+	line, err := term.ReadLine()
+	if err == io.EOF {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if line == "" {
+		return nil
+	}
+	if strings.HasPrefix(QUIT_SIGN, line) {
+		return fmt.Errorf("Listener: Quit!")
+	}
+	respContent := c.commander(line)
+	fmt.Fprintln(term, respContent)
+	return nil
+}
 func (c *clingImpl) Serve() error {
 	if !terminal.IsTerminal(0) || !terminal.IsTerminal(1) {
 		return fmt.Errorf("stdin/stdout should be terminal")
@@ -67,70 +94,11 @@ func (c *clingImpl) Serve() error {
 		io.Reader
 		io.Writer
 	}{os.Stdin, os.Stdout}
-	term := terminal.NewTerminal(screen, "")
-	term.SetPrompt(string(term.Escape.Red) + c.prompt + string(term.Escape.Reset))
-	for {
-		line, err := term.ReadLine()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(QUIT_SIGN, line) {
-			c.logger.Println("Listener: Quit!")
-			break
-		}
-		respContent := c.commander(line)
-		fmt.Fprintln(term, respContent)
+	term, err := newTerm(screen, c.prompt)
+	for err == nil {
+		err = c.serve(term)
 	}
-	return nil
-}
-
-func (c *clingImpl) listenAndServe(port string) error {
-	defer c.file.Close()
-	c.port = ":" + port
-	listener, err := net.Listen("tcp", c.port)
-	if err != nil {
-		c.logger.Printf("Listener: Listen Error: %s\n", err)
-		return fmt.Errorf("listener error")
-	}
-	c.logger.Println("Listener: Listening...")
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			c.logger.Printf("Listener: Accept Error: %s\n", err)
-			continue
-		}
-		go func(conn net.Conn) {
-			defer conn.Close()
-			for {
-				num, err := writer(conn, c.prompt)
-				if err != nil {
-					c.logger.Printf("Listener: Write Error: %s\n", err)
-				}
-				c.logger.Println("Listener: Accepted a request.")
-				c.logger.Println("Listener: Read the request content...")
-				line, err := reader(conn, DELIMITER)
-				if err != nil {
-					c.logger.Printf("Listener: Read error: %s", err)
-				}
-				if strings.HasPrefix(QUIT_SIGN, line) {
-					c.logger.Println("Listener: Quit!")
-					break
-				}
-				respContent := c.commander(line)
-				num, err = writer(conn, respContent)
-				if err != nil {
-					c.logger.Printf("Listener: Write Error: %s\n", err)
-				}
-				c.logger.Printf("Listener: Wrote %d byte(s)\n", num)
-			}
-		}(conn)
-	}
+	return err
 }
 
 func (c *clingImpl) ListenAndServe(port string) error {
@@ -150,33 +118,15 @@ func (c *clingImpl) ListenAndServe(port string) error {
 		}
 		go func(conn net.Conn) {
 			defer conn.Close()
-			r := bufio.NewReader(conn)
 			w := bufio.NewWriter(conn)
-			rw := bufio.NewReadWriter(r, w)
-			term := terminal.NewTerminal(rw, "")
-			term.SetPrompt(string(term.Escape.Red) + c.prompt + string(term.Escape.Reset))
-			for {
-				line, err := term.ReadLine()
-				if err == io.EOF {
-					return
-				}
-				if err != nil {
-					return
-				}
-				if line == "" {
-					continue
-				}
-				if strings.HasPrefix(QUIT_SIGN, line) {
-					c.logger.Println("Listener: Quit!")
-					break
-				}
-				respContent := c.commander(line)
-				fmt.Fprintln(term, respContent)
+			term, err := newTerm(conn, c.prompt)
+			for err == nil {
+				err = c.serve(term)
 				w.Flush()
 			}
 		}(conn)
 	}
-	return nil
+	return err
 }
 
 func reader(conn net.Conn, delim byte) (string, error) {
@@ -227,13 +177,14 @@ func (c *clingImpl) invoke(cmd string, args ...interface{}) string {
 		inputs[i] = reflect.ValueOf(args[i])
 	}
 	c.logger.Printf("invoking : %v.%s(%s)", reflect.TypeOf(c.t).String(), cmd, args)
-	c.args = c.args[:0]
 	_, ok := reflect.TypeOf(c.t).MethodByName(cmd)
 	if ok {
 		v := reflect.ValueOf(c.t).MethodByName(cmd).Call(inputs)
 		return v[0].Interface().(string)
 	}
-	return fmt.Sprintf("Missing definition %s(%v)", cmd, inputs)
+	out := fmt.Sprintf("Missing definition %s(%v)", cmd, c.args)
+	c.args = c.args[:0]
+	return out
 }
 
 func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool) {

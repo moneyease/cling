@@ -3,6 +3,7 @@ package main
 import (
 	cling ".."
 	"fmt"
+	"os"
 )
 
 var jsonStr = `
@@ -33,35 +34,40 @@ var jsonStr = `
 var jsonStr2 = `
 {
   "show": {
-    "sessions": {
-      "all": {
-    "filter": {
-      "tenant": {
-        "arg": {
-          "func": "SessionByTenant"
-        }
-      }
+    "version": {
+        "func": "ShowVersion"
     },
+    "session": {
+      "all": {
+            "filter": {
+                "tenant": {
+                    "arg": {
+                        "func": "SessionByTenant"
+                    }
+                },
+                "firewall": {
+                    "arg": {
+                        "func": "SessionByFirewall"
+                    }
+                }
+            },
+
         "func": "ShowSessions"
       },
       "id": {
-      "arg": {
-      "filter": {
-        "tenant": {
-          "arg": {
-            "func": "SessionOneByTenant"
-          }
+        "arg": {
+            "func": "ShowSession"
         }
       }
-    }
-      }
     },
-    "tenants": {
+    "tenant": {
       "all": {
         "func": "ShowTenants"
       },
       "id": {
-        "func": "ShowTenant"
+        "arg": {
+            "func": "ShowTenant"
+        }
       }
     }
   },
@@ -69,7 +75,7 @@ var jsonStr2 = `
     "func": "Bar"
   },
   "help": "MainHelp",
-  "quit": "MainHelp"
+  "quit": ""
 }
 `
 
@@ -91,8 +97,11 @@ func (t T) Foo(n []string) string {
 	return fmt.Sprintf("%v: in func Foo", n)
 }
 func main() {
-	fmt.Printf("Listening on 9090\n")
 	c := cling.New(jsonStr2, ">", T{})
-	c.ListenAndServe("9090")
-	//c.Serve()
+	if len(os.Args) > 1 {
+		fmt.Printf("Listening on %s\n", os.Args[1])
+		c.ListenAndServe(os.Args[1])
+	} else {
+		c.Serve()
+	}
 }
