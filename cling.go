@@ -42,7 +42,7 @@ func New(s string, prompt string, t interface{}) Cling {
 		panic(err)
 		return nil
 	}
-	c.prompt = prompt
+	c.prompt = prompt + " "
 	c.t = t
 	c.file, err = os.OpenFile("text.log",
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -126,7 +126,7 @@ func (c *clingImpl) ListenAndServe(port string) error {
 				if err != nil {
 					c.logger.Printf("Listener: Read error: %s", err)
 				}
-				if line == QUIT_SIGN {
+				if strings.HasPrefix(QUIT_SIGN, line) {
 					c.logger.Println("Listener: Quit!")
 					break
 				}
@@ -189,12 +189,13 @@ func (c *clingImpl) invoke(cmd string, args ...interface{}) string {
 		inputs[i] = reflect.ValueOf(args[i])
 	}
 	c.logger.Printf("invoking : %v.%s(%s)", reflect.TypeOf(c.t).String(), cmd, args)
+	c.args = c.args[:0]
 	_, ok := reflect.TypeOf(c.t).MethodByName(cmd)
 	if ok {
 		v := reflect.ValueOf(c.t).MethodByName(cmd).Call(inputs)
 		return v[0].Interface().(string)
 	}
-	return fmt.Sprintf("Missing definition ") + cmd
+	return fmt.Sprintf("Missing definition %s(%v)", cmd, inputs)
 }
 
 func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool) {
@@ -244,11 +245,9 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 }
 
 func (c *clingImpl) parser(in []string, index int, m map[string]interface{}) string {
-	c.logger.Printf("m is %v", m)
 	if index == len(in) {
 		if k, ok := m["func"]; ok {
 			return c.invoke(k.(string), c.args)
-			c.args = c.args[:]
 		}
 		// sh se id 1 2
 		key := ""

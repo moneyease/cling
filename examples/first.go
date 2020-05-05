@@ -35,19 +35,25 @@ var jsonStr2 = `
   "show": {
     "sessions": {
       "all": {
-		"filter": {
-			"tenant": {
-				"arg": {
-					"func": "SessionByTenant"
-				}
-			}
-		},
+    "filter": {
+      "tenant": {
+        "arg": {
+          "func": "SessionByTenant"
+        }
+      }
+    },
         "func": "ShowSessions"
       },
       "id": {
-	  	"arg": {
-        	"func": "ShowSession"
-		}
+      "arg": {
+      "filter": {
+        "tenant": {
+          "arg": {
+            "func": "SessionOneByTenant"
+          }
+        }
+      }
+    }
       }
     },
     "tenants": {
@@ -77,8 +83,8 @@ func (t T) SessionHelp(_ []string) string {
 	return "sessionHelp"
 }
 
-func (t T) Bar(n []string) string {
-	return fmt.Sprintf("%v: in func Bar", n)
+func (t T) SessionOneByTenant(n []string) string {
+	return fmt.Sprintf("%v: in func SessionOneByTenant", n)
 }
 
 func (t T) Foo(n []string) string {
