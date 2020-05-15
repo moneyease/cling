@@ -17,6 +17,10 @@ MAKEFLAGS += --silent
 
 go-compile: go-clean go-cling go-examples
 
+.PHONY: test
+test: go-compile
+	./bin/first -f ./examples/first.json -t
+
 go-examples:
 	@echo "  >  building binaries..."
 	@GOPATH=$(GOPATH) GOBIN=$(GOBIN) go build -o $(GOBIN)/first examples/first.go
