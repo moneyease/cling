@@ -1,0 +1,53 @@
+{
+  "show": {
+    "version": {
+      "func": "ShowVersion"
+    },
+    "session": {
+      "all": {
+        "filter": {
+          "tenant": {
+            "argGetTenant": {
+              "func": "SessionByTenant"
+            }
+          },
+          "firewall is burning": {
+            "argGetFirewall": {
+              "func": "SessionByFirewall"
+            }
+          }
+        },
+        "func": "ShowSessions"
+      },
+      "id": {
+        "argGetSession": {
+          "func": "ShowSession"
+        }
+      }
+    },
+    "tenant": {
+      "all": {
+        "func": "ShowTenants"
+      },
+      "id": {
+        "argStrictGetTenant": {
+          "func": "ShowTenant"
+        }
+      }
+    }
+  },
+  "set": {
+    "logging": {
+      "argStrictGetLevel": {
+        "tenant": {
+          "argStrictGetTenant": {
+            "func": "SetLoggingTenant"
+          }
+        },
+        "func": "SetLogging"
+      }
+    }
+  },
+  "help": "MainHelp",
+  "quit": ""
+}
