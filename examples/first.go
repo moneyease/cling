@@ -57,7 +57,7 @@ func main() {
 	}
 	c := cling.New(string(content), ">", T{})
 	if *gTest {
-		for k, v := range map[string]string{
+		m := map[string]string{
 			"sh se all ?":           "<enter> filter",
 			"show":                  "version session tenant",
 			"sh se all f t k l":     "extra args",
@@ -77,9 +77,8 @@ func main() {
 			"set log info gpcs":     "tenant",
 			"set log info ten gpcs": "Missing definition",
 			"se l d":                "debug disable",
-		} {
-			fmt.Printf("%s\n", c.Test(k, v))
 		}
+		c.Test(m)
 		return
 	}
 	if *gPort == "" {
