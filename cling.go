@@ -43,15 +43,14 @@ func New(s string, prompt string, t interface{}) Cling {
 		panic(err)
 		return nil
 	}
-	c.prompt = prompt + " "
+	c.prompt = "\n" + prompt + " "
 	c.t = t
 	c.file, err = os.OpenFile("text.log",
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
-	c.logger = zerolog.New(c.file).With().CallerWithSkipFrameCount(3).Logger() //.Level(zerolog.InfoLevel)
-	//	c.logger = c.logger.Logger()
+	c.logger = zerolog.New(c.file).With().CallerWithSkipFrameCount(3).Logger().Level(zerolog.InfoLevel)
 	return &c
 }
 
@@ -118,6 +117,9 @@ func (c *clingImpl) listenAndServe(port string) error {
 		}
 		go func(conn net.Conn) {
 			defer conn.Close()
+			if _, err := writer(conn, "Press '?+Enter' for suggestions"); err != nil {
+				c.logger.Printf("Listener: Write Error: %s\n", err)
+			}
 			for {
 				num, err := writer(conn, c.prompt)
 				if err != nil {

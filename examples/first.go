@@ -76,6 +76,7 @@ func main() {
 			"set log info te ?":     "gpcs pwc",
 			"set log info gpcs":     "tenant",
 			"set log info ten gpcs": "Missing definition",
+			"se l d":                "debug disable",
 		} {
 			fmt.Printf("%s\n", c.Test(k, v))
 		}
