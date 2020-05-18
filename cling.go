@@ -16,7 +16,7 @@ import (
 type Cling interface {
 	ListenAndServe(string) error
 	Serve() error
-	Test(map[string]string)
+	Test(string) string
 }
 
 type clingImpl struct {
@@ -53,15 +53,9 @@ func New(s string, prompt string, t interface{}) Cling {
 	return &c
 }
 
-func (c *clingImpl) Test(m map[string]string) {
-	for cmd, expect := range m {
-		if output := c.commander(cmd); strings.HasPrefix(output, expect) {
-			fmt.Println("\033[32m[PASSED]\033[0m "+ cmd)
-		} else {
-			c.logger.Printf("cmd '%v' out '%v' expected '%v'", cmd, output, expect)
-			fmt.Println("\033[31m[FAILED]\033[0m "+ cmd)
-		}
-	}
+func (c *clingImpl) Test(cmd string) string {
+	return strings.TrimSpace(c.commander(cmd))
+
 }
 
 func (c *clingImpl) Serve() error {

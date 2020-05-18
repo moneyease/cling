@@ -19,7 +19,7 @@ go-compile: go-clean go-cling go-examples
 
 .PHONY: test
 test: go-compile
-	./bin/first -f ./examples/first.json -t
+	@GOPATH=$(GOPATH) GOBIN=$(GOBIN) go test -v ./examples
 
 go-examples:
 	@echo "  >  building binaries..."
