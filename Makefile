@@ -25,6 +25,10 @@ go-examples:
 	@echo "  >  building binaries..."
 	@GOPATH=$(GOPATH) GOBIN=$(GOBIN) go build -o $(GOBIN)/first examples/first.go
 
+go-completer:
+	@echo "  >  building completer..."
+	@GOPATH=$(GOPATH) GOBIN=$(GOBASE)/completer go build -o $(GOBIN)/completer build completer/completer.go
+
 go-cling:
 	@echo "  >  building dependencies..."
 	@GOPATH=$(GOPATH) GOBIN=$(GOBIN) go build -o $(GOBIN)/$(PROJECTNAME) $(GOFILES)

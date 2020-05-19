@@ -1,10 +1,12 @@
 package cling
 
 import (
+	completer "./completer"
 	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/chzyer/readline"
 	"github.com/rs/zerolog"
 	"io"
 	"net"
@@ -13,8 +15,11 @@ import (
 	"strings"
 )
 
+var comp *readline.PrefixCompleter = completer.Completer
+
 type Cling interface {
 	ListenAndServe(string) error
+	Listen()
 	Serve() error
 	Test(string) string
 }
@@ -49,7 +54,19 @@ func New(s string, prompt string, t interface{}) Cling {
 	if err != nil {
 		fmt.Println(err)
 	}
-	c.logger = zerolog.New(c.file).With().CallerWithSkipFrameCount(3).Logger().Level(zerolog.InfoLevel)
+	c.logger = zerolog.New(c.file).With().CallerWithSkipFrameCount(3).Logger() //.Level(zerolog.InfoLevel)
+	completer.Init()
+	go func() {
+		for {
+			select {
+			case line := <-completer.F:
+				s := strings.Split(strings.TrimSpace(c.commander(strings.TrimSpace(line[0]+" ?"))), " ")
+				c.logger.Printf("in %v, out %v\n", line, s)
+				completer.F <- s
+			}
+		}
+	}()
+
 	return &c
 }
 
@@ -60,6 +77,51 @@ func (c *clingImpl) Test(cmd string) string {
 
 func (c *clingImpl) Serve() error {
 	return nil
+}
+
+func (c *clingImpl) Listen() {
+	cfg := &readline.Config{
+		Prompt:            "\033[31m»\033[0m ",
+		HistoryFile:       "/tmp/readline.tmp",
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+		HistorySearchFold: true,
+		//	FuncFilterInputRune: filterInput,
+		AutoComplete: comp,
+	}
+
+	handleFunc := func(rl *readline.Instance) {
+		for {
+			line, err := rl.Readline()
+			if err != nil {
+				break
+			}
+			//			fmt.Fprintln(rl.Stdout(), "receive:"+line)
+			if strings.HasPrefix(QUIT_SIGN, line) {
+				c.logger.Printf("Listener: Quit!")
+				break
+			}
+			out := c.commander(line)
+			fmt.Fprintln(rl.Stdout(), out)
+		}
+	}
+	err := readline.ListenRemote("tcp", ":12344", cfg, handleFunc)
+	if err != nil {
+		println(err.Error())
+	}
+}
+func filterInput(r rune) (rune, bool) {
+	fmt.Println(r)
+	switch r {
+	// block CtrlZ feature
+	case readline.CharTab:
+		//return r, false
+		return rune('\n'), true
+	case rune('?'):
+		//return r, false
+		return rune('\n'), true
+	}
+	return r, true
 }
 
 func (c *clingImpl) ListenAndServe(port string) error {
@@ -79,31 +141,37 @@ func (c *clingImpl) ListenAndServe(port string) error {
 		}
 		go func(conn net.Conn) {
 			defer conn.Close()
-			if _, err := writer(conn, "Press '?+Enter' for suggestions"); err != nil {
-				c.logger.Printf("Listener: Write Error: %s\n", err)
+			cfg := readline.Config{
+				Prompt:              "\033[31m»\033[0m ",
+				HistoryFile:         "/tmp/readline.tmp",
+				InterruptPrompt:     "^C",
+				EOFPrompt:           "exit",
+				HistorySearchFold:   true,
+				FuncFilterInputRune: filterInput,
 			}
 			for {
-				num, err := writer(conn, c.prompt)
+				rl, err := readline.HandleConn(cfg, conn)
+				line, err := rl.Readline()
 				if err != nil {
-					c.logger.Printf("Listener: Write Error: %s\n", err)
-				}
-				c.logger.Printf("Listener: Accepted a request.")
-				c.logger.Printf("Listener: Read the request content...")
-				line, err := reader(conn, DELIMITER)
-				if err != nil {
-					c.logger.Printf("Listener: Read error: %s", err)
+					break
 				}
 				if strings.HasPrefix(QUIT_SIGN, line) {
 					c.logger.Printf("Listener: Quit!")
 					break
 				}
-				respContent := c.commander(line)
-				num, err = writer(conn, respContent)
-				if err != nil {
-					c.logger.Printf("Listener: Write Error: %s\n", err)
+				out := c.commander(line)
+				sl := strings.Split(out, " ")
+				completer := readline.NewPrefixCompleter()
+				for _, v := range sl {
+					completer.Children = append(completer.Children, readline.PcItem(v))
 				}
-				c.logger.Printf("Listener: Wrote %d byte(s)\n", num)
+				//	readline.SetAutoComplete(completer)
+				_, err = readline.NewEx(&readline.Config{
+					Prompt:       "9p> ",
+					AutoComplete: completer,
+				})
 			}
+
 		}(conn)
 	}
 }

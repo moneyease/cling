@@ -123,9 +123,9 @@ func main() {
 	}
 	c := cling.New(string(content), ">", T{})
 	if *gPort == "" {
-		c.Serve()
+		c.Listen()
 	} else {
-		fmt.Printf("Listening on 9090\n")
-		c.ListenAndServe("9090")
+		fmt.Printf("Listening on %v\n", *gPort)
+		c.ListenAndServe(*gPort)
 	}
 }
