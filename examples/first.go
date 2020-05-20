@@ -7,74 +7,6 @@ import (
 	"io/ioutil"
 )
 
-var jsonStr = `
-{
-  "show": {
-    "sessions": {
-      "all": {
-        "func": "Foo"
-      },
-      "id": {
-        "func": "200"
-      },
-      "help": "SessionHelp"
-    },
-    "tenants": {
-      "func": "300",
-      "help": "TenantHelp"
-    },
-    "help": "ShowHelp"
-  },
-  "set": {
-    "func": "Bar",
-    "help": "SetHelp"
-  },
-  "help": "MainHelp"
-}
-`
-var jsonStr2 = `
-{
-  "show": {
-    "sessions": {
-      "all": {
-    "filter": {
-      "tenant": {
-        "arg": {
-          "func": "SessionByTenant"
-        }
-      }
-    },
-        "func": "ShowSessions"
-      },
-      "id": {
-      "arg": {
-      "filter": {
-        "tenant": {
-          "arg": {
-            "func": "SessionOneByTenant"
-          }
-        }
-      }
-    }
-      }
-    },
-    "tenants": {
-      "all": {
-        "func": "ShowTenants"
-      },
-      "id": {
-        "func": "ShowTenant"
-      }
-    }
-  },
-  "set": {
-    "func": "Bar"
-  },
-  "help": "MainHelp",
-  "quit": "MainHelp"
-}
-`
-
 type T struct{}
 
 func (t T) MainHelp(_ []string) string {
@@ -121,9 +53,9 @@ func main() {
 		fmt.Errorf("%v", err)
 		return
 	}
-	c := cling.New(string(content), ">", T{})
+	c := cling.New(string(content), T{})
 	if *gPort == "" {
-		c.Listen()
+		c.Serve()
 	} else {
 		fmt.Printf("Listening on %v\n", *gPort)
 		c.ListenAndServe(*gPort)

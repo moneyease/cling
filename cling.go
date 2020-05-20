@@ -1,103 +1,158 @@
 package cling
 
 import (
-	completer "./completer"
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/chzyer/readline"
-	"github.com/rs/zerolog"
-	"io"
-	"net"
+	zlog "github.com/rs/zerolog"
 	"os"
 	"reflect"
 	"strings"
 )
 
-var comp *readline.PrefixCompleter = completer.Completer
-
 type Cling interface {
 	ListenAndServe(string) error
-	Listen()
 	Serve() error
+	LogLevel(string)
+	Rebuild()
 	Test(string) string
 }
 
 type clingImpl struct {
-	jsonMap      map[string]interface{}
-	port, prompt string
-	t            interface{}
-	args         []string
-	logger       zerolog.Logger
-	file         *os.File
+	jsonMap   map[string]interface{}
+	port      string
+	t         interface{}
+	args      []string
+	logger    zlog.Logger
+	file      *os.File
+	completer *readline.PrefixCompleter
 }
 
 var reserved = map[string]bool{"help": true, "func": true}
 
 const (
 	DELIMITER byte = '\n'
-	QUIT_SIGN      = "quit"
+	QUIT_SIGN      = "quit "
 )
 
-func New(s string, prompt string, t interface{}) Cling {
+func (c *clingImpl) buildPrefix(pc *readline.PrefixCompleter, m map[string]interface{}) []readline.PrefixCompleterInterface {
+	var p, q []readline.PrefixCompleterInterface
+	for k, v := range m {
+		if k == "func" {
+			c.logger.Printf("%s", v.(string))
+		} else if k == "help" || k == "quit" {
+			p = append(p, readline.PcItem(k))
+		} else {
+			if strings.HasPrefix(k, "arg") {
+				opts := c.invoke(strings.TrimPrefix(k, "arg"), []string{})
+				for _, o := range strings.Split(opts, " ") {
+					pc := readline.PcItem(strings.TrimSpace(o))
+					p = append(p, pc)
+					q = append(q, c.buildPrefix(pc, v.(map[string]interface{}))...)
+				}
+				continue
+			} else {
+				pc := readline.PcItem(k)
+				p = append(p, pc)
+				q = append(q, c.buildPrefix(pc, v.(map[string]interface{}))...)
+			}
+		}
+	}
+	pc.SetChildren(p)
+	return append(p, q...)
+}
+
+func New(s string, t interface{}) Cling {
 	var c clingImpl
 	err := json.Unmarshal([]byte(s), &c.jsonMap)
 	if err != nil {
 		panic(err)
 		return nil
 	}
-	c.prompt = "\n" + prompt + " "
 	c.t = t
 	c.file, err = os.OpenFile("text.log",
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
-	c.logger = zerolog.New(c.file).With().CallerWithSkipFrameCount(3).Logger() //.Level(zerolog.InfoLevel)
-	completer.Init()
-	go func() {
-		for {
-			select {
-			case line := <-completer.F:
-				s := strings.Split(strings.TrimSpace(c.commander(strings.TrimSpace(line[0]+" ?"))), " ")
-				c.logger.Printf("in %v, out %v\n", line, s)
-				completer.F <- s
-			}
-		}
-	}()
-
+	c.logger = zlog.New(c.file).With().CallerWithSkipFrameCount(3).Logger().Level(zlog.InfoLevel)
+	c.completer = readline.NewPrefixCompleter()
+	c.buildPrefix(c.completer, c.jsonMap)
+	c.logger.Printf(c.completer.Tree(""))
 	return &c
+}
+
+func (c *clingImpl) Rebuild() {
+	c.logger.Printf("---- rebuilding ----")
+	c.completer = readline.NewPrefixCompleter()
+	c.buildPrefix(c.completer, c.jsonMap)
+	readline.SetAutoComplete(c.completer)
+	c.logger.Printf(c.completer.Tree(""))
+}
+
+func (c *clingImpl) LogLevel(cmd string) {
+	m := map[string]zlog.Level{
+		"info":    zlog.InfoLevel,
+		"debug":   zlog.DebugLevel,
+		"warn":    zlog.WarnLevel,
+		"error":   zlog.ErrorLevel,
+		"fatal":   zlog.FatalLevel,
+		"disable": zlog.Disabled,
+		"panic":   zlog.PanicLevel,
+	}
+	if l, ok := m[cmd]; ok {
+		c.logger.Level(l)
+	}
 }
 
 func (c *clingImpl) Test(cmd string) string {
 	return strings.TrimSpace(c.commander(cmd))
-
 }
 
 func (c *clingImpl) Serve() error {
-	return nil
-}
-
-func (c *clingImpl) Listen() {
 	cfg := &readline.Config{
 		Prompt:            "\033[31m»\033[0m ",
 		HistoryFile:       "/tmp/readline.tmp",
 		InterruptPrompt:   "^C",
 		EOFPrompt:         "exit",
 		HistorySearchFold: true,
-		//	FuncFilterInputRune: filterInput,
-		AutoComplete: comp,
+		AutoComplete:      c.completer,
 	}
+	l, err := readline.NewEx(cfg)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	for {
+		line, err := l.Readline()
+		if err != nil {
+			break
+		}
+		if line != "" && strings.HasPrefix(QUIT_SIGN, line) {
+			break
+		}
+		out := c.commander(line)
+		fmt.Fprintln(l.Stdout(), out)
+	}
+	return nil
+}
 
+func (c *clingImpl) ListenAndServe(addr string) error {
+	cfg := &readline.Config{
+		Prompt:            "\033[31m»\033[0m ",
+		HistoryFile:       "/tmp/readline.tmp",
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+		HistorySearchFold: true,
+		AutoComplete:      c.completer,
+	}
 	handleFunc := func(rl *readline.Instance) {
 		for {
 			line, err := rl.Readline()
 			if err != nil {
 				break
 			}
-			//			fmt.Fprintln(rl.Stdout(), "receive:"+line)
-			if strings.HasPrefix(QUIT_SIGN, line) {
+			if line != "" && strings.HasPrefix(QUIT_SIGN, line) {
 				c.logger.Printf("Listener: Quit!")
 				break
 			}
@@ -105,115 +160,16 @@ func (c *clingImpl) Listen() {
 			fmt.Fprintln(rl.Stdout(), out)
 		}
 	}
-	err := readline.ListenRemote("tcp", ":12344", cfg, handleFunc)
-	if err != nil {
-		println(err.Error())
-	}
-}
-func filterInput(r rune) (rune, bool) {
-	fmt.Println(r)
-	switch r {
-	// block CtrlZ feature
-	case readline.CharTab:
-		//return r, false
-		return rune('\n'), true
-	case rune('?'):
-		//return r, false
-		return rune('\n'), true
-	}
-	return r, true
-}
-
-func (c *clingImpl) ListenAndServe(port string) error {
-	defer c.file.Close()
-	c.port = ":" + port
-	listener, err := net.Listen("tcp", c.port)
-	if err != nil {
-		c.logger.Printf("Listener: Listen Error: %s\n", err)
-		return fmt.Errorf("listener error")
-	}
-	c.logger.Printf("Listener: Listening...")
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			c.logger.Printf("Listener: Accept Error: %s\n", err)
-			continue
-		}
-		go func(conn net.Conn) {
-			defer conn.Close()
-			cfg := readline.Config{
-				Prompt:              "\033[31m»\033[0m ",
-				HistoryFile:         "/tmp/readline.tmp",
-				InterruptPrompt:     "^C",
-				EOFPrompt:           "exit",
-				HistorySearchFold:   true,
-				FuncFilterInputRune: filterInput,
-			}
-			for {
-				rl, err := readline.HandleConn(cfg, conn)
-				line, err := rl.Readline()
-				if err != nil {
-					break
-				}
-				if strings.HasPrefix(QUIT_SIGN, line) {
-					c.logger.Printf("Listener: Quit!")
-					break
-				}
-				out := c.commander(line)
-				sl := strings.Split(out, " ")
-				completer := readline.NewPrefixCompleter()
-				for _, v := range sl {
-					completer.Children = append(completer.Children, readline.PcItem(v))
-				}
-				//	readline.SetAutoComplete(completer)
-				_, err = readline.NewEx(&readline.Config{
-					Prompt:       "9p> ",
-					AutoComplete: completer,
-				})
-			}
-
-		}(conn)
-	}
-}
-
-func reader(conn net.Conn, delim byte) (string, error) {
-	reader := bufio.NewReader(conn)
-	var buffer bytes.Buffer
-	for {
-		ba, isPrefix, err := reader.ReadLine()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return "", err
-		}
-		buffer.Write(ba)
-		if !isPrefix {
-			break
-		}
-	}
-	return buffer.String(), nil
-}
-
-func writer(conn net.Conn, line string) (int, error) {
-	writer := bufio.NewWriter(conn)
-	number, err := writer.WriteString(line)
-	if err == nil {
-		err = writer.Flush()
-	}
-	return number, err
+	err := readline.ListenRemote("tcp", addr, cfg, handleFunc)
+	return err
 }
 
 func (c *clingImpl) commander(cmd string) string {
 	in := strings.Split(strings.TrimSpace(cmd), " ")
-	c.logger.Printf("-------- '%s' ---------", in)
+	c.logger.Printf("-------- '%s' ---------", cmd)
 	c.args = c.args[:0]
 	index := 0
 	key := in[index]
-	c.logger.Printf("Getting help key %v", key)
-	if k, ok := c.helper(c.jsonMap, &key); ok {
-		return k
-	}
 	if k, ok := c.jsonMap[key]; ok {
 		return c.parser(in, index+1, k.(map[string]interface{}))
 	}
@@ -237,26 +193,6 @@ func (c *clingImpl) invoke(cmd string, args ...interface{}) string {
 
 func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool) {
 	*key = strings.TrimSpace(*key)
-	pattern := "arg"
-	if *key == "?" {
-		var help, enter string
-		for k, _ := range m {
-			c.logger.Printf("k=%s, key=%s\n", k, *key)
-			if k == "func" {
-				enter = "<enter> "
-				continue
-			}
-			if strings.HasPrefix(k, pattern) {
-				if strings.HasPrefix(k, "argStrict") {
-					pattern = "argStrict"
-				}
-				f := strings.TrimSpace(strings.TrimPrefix(k, pattern))
-				return c.invoke(f, []string{}), true
-			}
-			help += fmt.Sprintf("%v ", k)
-		}
-		return enter + help, true
-	}
 	if k, ok := m[*key]; ok {
 		if *key == "help" {
 			c.logger.Printf("invoke %s", k.(string))
@@ -268,27 +204,13 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 		var args bool
 		err := ""
 		for k, _ := range m {
+			pattern := "arg"
 			if !reserved[k] {
 				c.logger.Printf("k=%s, key=%s\n", k, *key)
 				if strings.HasPrefix(k, pattern) {
 					args = true
-					if strings.HasPrefix(k, "argStrict") {
-						f := strings.TrimSpace(strings.TrimPrefix(k, "argStrict"))
-						k := c.invoke(f, []string{})
-						opts := strings.Split(strings.TrimSpace(k), " ")
-						for _, w := range opts {
-							c.logger.Printf("w=%s, key=%s\n", w, *key)
-							nmatch++
-							help += fmt.Sprintf("%v ", w)
-							if strings.HasPrefix(w, *key) {
-								help_filter += fmt.Sprintf("%v ", w)
-								nfilter++
-							}
-						}
-					} else {
-						help_filter += fmt.Sprintf("%v ", *key)
-						nfilter = 1
-					}
+					help_filter += fmt.Sprintf("%v ", *key)
+					nfilter = 1
 					*key = k
 					break
 				}
@@ -296,7 +218,7 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 				help += fmt.Sprintf("%v ", k)
 				if strings.HasPrefix(k, *key) {
 					c.logger.Printf("k=%s, key=%s\n", k, *key)
-					help_filter += fmt.Sprintf("%v ", k) // strings.TrimPrefix(k, "arg"))
+					help_filter += fmt.Sprintf("%v ", k)
 					nfilter++
 				}
 			}
@@ -308,7 +230,7 @@ func (c *clingImpl) helper(m map[string]interface{}, key *string) (string, bool)
 			suggested := strings.TrimSpace(help_filter)
 			if args {
 				c.args = append(c.args, suggested)
-				c.logger.Printf("Args: %v", c.args)
+				c.logger.Printf("nf=1 Args: %v", c.args)
 				return *key, false
 			}
 			*key = suggested
@@ -332,25 +254,15 @@ func (c *clingImpl) parser(in []string, index int, m map[string]interface{}) str
 			}()
 			return c.invoke(k.(string), c.args)
 		}
-		key := "?"
-		c.logger.Printf("Getting help key %v", key)
-		k, _ := c.helper(m, &key)
-		return k
+		return "\nInvalid Syntax"
 	}
 	key := in[index]
-	c.logger.Printf("Getting help key %v", key)
 	if k, ok := c.helper(m, &key); ok {
 		return k
 	}
+	c.logger.Printf("Getting func key %v", key)
 	if k, ok := m[key]; ok {
 		return c.parser(in, index+1, k.(map[string]interface{}))
 	}
-	/*
-		key = ""
-		c.logger.Printf("Getting help key %v", key)
-		if k, ok := c.helper(m, &key); ok {
-			return k
-		}
-	*/
-	return "Unknow Error"
+	return "\nUnknow Error"
 }

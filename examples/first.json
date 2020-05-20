@@ -11,7 +11,7 @@
               "func": "SessionByTenant"
             }
           },
-          "firewall is burning": {
+          "firewall": {
             "argGetFirewall": {
               "func": "SessionByFirewall"
             }
@@ -30,7 +30,7 @@
         "func": "ShowTenants"
       },
       "id": {
-        "argStrictGetTenant": {
+        "argGetTenant": {
           "func": "ShowTenant"
         }
       }
@@ -38,9 +38,9 @@
   },
   "set": {
     "logging": {
-      "argStrictGetLevel": {
+      "argGetLevel": {
         "tenant": {
-          "argStrictGetTenant": {
+          "argGetTenant": {
             "func": "SetLoggingTenant"
           }
         },
@@ -48,6 +48,8 @@
       }
     }
   },
-  "help": "MainHelp",
+  "help": {
+          "func": "MainHelp"
+  },
   "quit": ""
 }
