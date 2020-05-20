@@ -14,7 +14,7 @@ func TestTest(t *testing.T) {
 		fmt.Errorf("%v", err)
 		return
 	}
-	c := cling.New(string(content), ">", T{})
+	c := cling.New(string(content), T{})
 	m := map[string]string{
 		"show":                                  "Invalid Syntax",
 		"show session":                          "Invalid Syntax",

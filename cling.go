@@ -14,7 +14,6 @@ type Cling interface {
 	ListenAndServe(string) error
 	Serve() error
 	LogLevel(string)
-	Rebuild()
 	Test(string) string
 }
 
@@ -35,6 +34,14 @@ const (
 	QUIT_SIGN      = "quit "
 )
 
+func (c *clingImpl) getOpts(path string) func(string) []string {
+	return func(line string) []string {
+		c.logger.Printf("in func line %v\n", path)
+		opts := c.invoke(strings.TrimPrefix(path, "arg"), []string{})
+		return strings.Split(opts, " ")
+	}
+}
+
 func (c *clingImpl) buildPrefix(pc *readline.PrefixCompleter, m map[string]interface{}) []readline.PrefixCompleterInterface {
 	var p, q []readline.PrefixCompleterInterface
 	for k, v := range m {
@@ -44,12 +51,9 @@ func (c *clingImpl) buildPrefix(pc *readline.PrefixCompleter, m map[string]inter
 			p = append(p, readline.PcItem(k))
 		} else {
 			if strings.HasPrefix(k, "arg") {
-				opts := c.invoke(strings.TrimPrefix(k, "arg"), []string{})
-				for _, o := range strings.Split(opts, " ") {
-					pc := readline.PcItem(strings.TrimSpace(o))
-					p = append(p, pc)
-					q = append(q, c.buildPrefix(pc, v.(map[string]interface{}))...)
-				}
+				pc := readline.PcItemDynamic(c.getOpts(strings.TrimPrefix(k, "args")))
+				p = append(p, pc)
+				q = append(q, c.buildPrefix(pc, v.(map[string]interface{}))...)
 				continue
 			} else {
 				pc := readline.PcItem(k)
@@ -70,24 +74,14 @@ func New(s string, t interface{}) Cling {
 		return nil
 	}
 	c.t = t
-	c.file, err = os.OpenFile("text.log",
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	c.file, err = os.OpenFile("text.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
-	c.logger = zlog.New(c.file).With().CallerWithSkipFrameCount(3).Logger().Level(zlog.InfoLevel)
+	c.logger = zlog.New(c.file).With().CallerWithSkipFrameCount(3).Logger().Level(zlog.Disabled)
 	c.completer = readline.NewPrefixCompleter()
 	c.buildPrefix(c.completer, c.jsonMap)
-	c.logger.Printf(c.completer.Tree(""))
 	return &c
-}
-
-func (c *clingImpl) Rebuild() {
-	c.logger.Printf("---- rebuilding ----")
-	c.completer = readline.NewPrefixCompleter()
-	c.buildPrefix(c.completer, c.jsonMap)
-	readline.SetAutoComplete(c.completer)
-	c.logger.Printf(c.completer.Tree(""))
 }
 
 func (c *clingImpl) LogLevel(cmd string) {
@@ -101,7 +95,7 @@ func (c *clingImpl) LogLevel(cmd string) {
 		"panic":   zlog.PanicLevel,
 	}
 	if l, ok := m[cmd]; ok {
-		c.logger.Level(l)
+		c.logger = c.logger.Level(l)
 	}
 }
 
