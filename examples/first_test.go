@@ -16,6 +16,7 @@ func TestTest(t *testing.T) {
 	}
 	c := cling.New(string(content), T{})
 	m := map[string]string{
+		"help":                                  "mainHelp",
 		"show":                                  "Invalid Syntax",
 		"show session":                          "Invalid Syntax",
 		"show session all":                      "Missing definition main.T.ShowSessions([[]])",

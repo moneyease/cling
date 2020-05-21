@@ -38,7 +38,7 @@ func (c *clingImpl) getOpts(path string) func(string) []string {
 	return func(line string) []string {
 		c.logger.Printf("in func line %v\n", path)
 		opts := c.invoke(strings.TrimPrefix(path, "arg"), []string{})
-		return strings.Split(opts, " ")
+		return strings.Split(strings.TrimSpace(opts), " ")
 	}
 }
 
@@ -141,6 +141,10 @@ func (c *clingImpl) ListenAndServe(addr string) error {
 		AutoComplete:      c.completer,
 	}
 	handleFunc := func(rl *readline.Instance) {
+		b, err := rl.ReadPassword("\033[31m»\033[0m Enter password:")
+		if err == nil {
+			c.logger.Printf("--%s\n", string(b))
+		}
 		for {
 			line, err := rl.Readline()
 			if err != nil {

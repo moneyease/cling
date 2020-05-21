@@ -54,6 +54,7 @@ func main() {
 		return
 	}
 	c := cling.New(string(content), T{})
+	c.LogLevel("debug")
 	if *gPort == "" {
 		c.Serve()
 	} else {
